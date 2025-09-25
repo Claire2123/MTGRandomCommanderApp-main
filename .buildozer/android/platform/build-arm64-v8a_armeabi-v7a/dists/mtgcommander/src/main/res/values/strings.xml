@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MTG Random Commander Generator</string>
+    <string name="private_version">8a37268cea4b8e4b35be9d4ee416c790e834218b</string>
+    <string name="presplash_color">#000000</string>
+    <string name="urlScheme">kivy</string>
+</resources>
