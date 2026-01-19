@@ -13,8 +13,17 @@ from kivy.loader import Loader
 from kivy.clock import mainthread
 from io import BytesIO
 from kivy.uix.widget import Widget
+from kivy.uix.behaviors import ButtonBehavior
+import os
 
 print("This app is under development and is not perfect!")
+
+# Custom button widget that uses images
+class ManaButton(ButtonBehavior, BoxLayout):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Clear canvas to remove any default background
+        self.canvas.clear()
 
 color_options = {
     "W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green",
@@ -28,6 +37,93 @@ color_options = {
 }
 
 class CommanderApp(App):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.mana_symbols_path = os.path.join(os.path.dirname(__file__), 'mana_symbols')
+        
+        # Mapping of color codes to symbol files
+        self.color_to_symbol = {
+            "W": "White.jpg",
+            "U": "Blue.jpg",
+            "B": "Black.jpg",
+            "R": "Red.jpg",
+            "G": "Green.jpg",
+            "C": "Colorless.jpg"
+        }
+    
+    def create_mana_button(self, code):
+        """Create a button with mana symbol images"""
+        # Create a ManaButton (which is a BoxLayout with button behavior)
+        btn = ManaButton(
+            orientation='vertical',
+            size_hint_y=None,
+            height=70,
+            spacing=5,
+            padding=5
+        )
+        
+        # Set background color and outline using canvas
+        from kivy.graphics import Color, Rectangle, Line
+        with btn.canvas.before:
+            # Black background to match image boxes
+            Color(0, 0, 0, 1)
+            Rectangle(size=btn.size, pos=btn.pos)
+            # Dark grey outline to distinguish button
+            Color(0.3, 0.3, 0.3, 1)
+            Line(rectangle=(btn.x, btn.y, btn.width, btn.height), width=2)
+        
+        # Bind to update rectangle and outline when button size/pos changes
+        btn.bind(size=self._update_rect, pos=self._update_rect)
+        
+        # Add top spacer for vertical centering
+        btn.add_widget(Widget(size_hint_y=1))
+        
+        # Create horizontal container for images
+        image_container = BoxLayout(
+            orientation='horizontal',
+            size_hint_y=None,
+            height=40,
+            spacing=5
+        )
+        
+        # Add left spacer to center images horizontally
+        image_container.add_widget(Widget(size_hint_x=1))
+        
+        # For colorless, only use the colorless symbol
+        if code == "C":
+            symbol_path = os.path.join(self.mana_symbols_path, self.color_to_symbol["C"])
+            img = Image(source=symbol_path, size_hint=(None, None), size=(40, 40), allow_stretch=True)
+            image_container.add_widget(img)
+        else:
+            # For each color in the code, add the corresponding symbol
+            for color_char in code:
+                if color_char in self.color_to_symbol:
+                    symbol_path = os.path.join(self.mana_symbols_path, self.color_to_symbol[color_char])
+                    img = Image(source=symbol_path, size_hint=(None, None), size=(40, 40), allow_stretch=True)
+                    image_container.add_widget(img)
+        
+        # Add right spacer to center images horizontally
+        image_container.add_widget(Widget(size_hint_x=1))
+        
+        btn.add_widget(image_container)
+        
+        # Add bottom spacer for vertical centering
+        btn.add_widget(Widget(size_hint_y=1))
+        
+        return btn
+    
+    def _update_rect(self, instance, value):
+        """Update background rectangle and outline when button size/pos changes"""
+        instance.canvas.before.clear()
+        from kivy.graphics import Color, Rectangle, Line
+        with instance.canvas.before:
+            # Black background to match image boxes
+            Color(0, 0, 0, 1)
+            Rectangle(size=instance.size, pos=instance.pos)
+            # Dark grey outline to distinguish button
+            Color(0.3, 0.3, 0.3, 1)
+            Line(rectangle=(instance.x, instance.y, instance.width, instance.height), width=2)
+
     def build(self):
         Window.clearcolor = (0.1, 0.1, 0.1, 1)
         self.title = "MTG Random Commander Generator"
@@ -46,15 +142,7 @@ class CommanderApp(App):
         )
         button_grid.bind(minimum_height=button_grid.setter('height'))
         for code, name in color_options.items():
-            btn = Button(
-                text=name,
-                font_size='15sp',
-                background_color=(0.27, 0.19, 0.98, 1),
-                color=(1,1,1,1),
-                padding=[10, 10],
-                size_hint_y=None,
-                height=70
-            )
+            btn = self.create_mana_button(code)
             btn.bind(on_release=lambda btn, c=code: self.get_commander(c))
             button_grid.add_widget(btn)
         main_layout.add_widget(button_grid)
