@@ -15,6 +15,7 @@ from io import BytesIO
 from kivy.uix.widget import Widget
 from kivy.uix.behaviors import ButtonBehavior
 import os
+import webbrowser
 
 print("This app is under development and is not perfect!")
 
@@ -125,13 +126,26 @@ class CommanderApp(App):
             Line(rectangle=(instance.x, instance.y, instance.width, instance.height), width=2)
 
     def build(self):
-        Window.clearcolor = (0.1, 0.1, 0.1, 1)
         self.title = "MTG Random Commander Generator"
 
         # Main layout inside a ScrollView for full vertical scrolling
         scrollview = ScrollView(size_hint=(1, 1))
         main_layout = BoxLayout(orientation='vertical', size_hint_y=None, spacing=10, padding=10)
         main_layout.bind(minimum_height=main_layout.setter('height'))
+        
+        # Add gradient background image
+        from kivy.graphics import Rectangle
+        gradient_path = os.path.join(os.path.dirname(__file__), 'gradient_background.png')
+        with main_layout.canvas.before:
+            Rectangle(source=gradient_path, pos=(0, 0), size=(Window.width, main_layout.height))
+        
+        # Bind to update background when size changes
+        def update_background(instance, value):
+            main_layout.canvas.before.clear()
+            with main_layout.canvas.before:
+                Rectangle(source=gradient_path, pos=(0, 0), size=(Window.width, main_layout.height))
+        
+        main_layout.bind(size=update_background)
 
         # Button grid
         button_grid = GridLayout(
@@ -173,6 +187,30 @@ class CommanderApp(App):
 
         self.no_image_label = Label(text="", color=(1,1,1,1), size_hint_y=None, height=40)
         main_layout.add_widget(self.no_image_label)
+
+        # Disclaimer section at the bottom
+        disclaimer_layout = BoxLayout(orientation='vertical', size_hint_y=None, height=80, padding=10, spacing=5)
+        disclaimer_label = Label(
+            text="!!!This app is currently under development and may not be perfect!!!",
+            color=(1, 1, 0, 1),  # Yellow text
+            size_hint_y=None,
+            height=30,
+            font_size='16sp'
+        )
+        disclaimer_layout.add_widget(disclaimer_label)
+        
+        github_button = Button(
+            text="My Github",
+            size_hint_y=None,
+            height=40,
+            background_color=(0.2, 0.3, 0.5, 1),
+            color=(0.5, 1, 1, 1),  # Cyan text
+            font_size='12sp'
+        )
+        github_button.bind(on_press=self.open_github)
+        disclaimer_layout.add_widget(github_button)
+        
+        main_layout.add_widget(disclaimer_layout)
 
         scrollview.add_widget(main_layout)
         return scrollview
@@ -264,6 +302,9 @@ class CommanderApp(App):
 
     def _on_image_loaded(self, img, *args):
         self.image.texture = img.texture
+
+    def open_github(self, instance):
+        webbrowser.open("https://github.com/Claire2123")
 
 if __name__ == "__main__":
     CommanderApp().run()
