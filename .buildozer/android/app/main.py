@@ -44,6 +44,9 @@ class CommanderApp(App):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.mana_symbols_path = os.path.join(os.path.dirname(__file__), 'mana_symbols')
+        # UI scale factor to make the app slightly smaller on normal-screen devices.
+        # Tweak this value if you want larger/smaller overall UI.
+        self.ui_scale = 0.88
         
         # Mapping of color codes to symbol files
         self.color_to_symbol = {
@@ -54,6 +57,20 @@ class CommanderApp(App):
             "G": "Green.jpg",
             "C": "Colorless.jpg"
         }
+
+    def sdp(self, value):
+        """Scaled dp: returns dp(value) multiplied by ui_scale."""
+        try:
+            return dp(value) * self.ui_scale
+        except Exception:
+            return dp(value)
+
+    def ssize(self, value):
+        """Scaled size for raw pixel values (int)."""
+        try:
+            return int(value * self.ui_scale)
+        except Exception:
+            return int(value)
     
     def get_system_bar_heights(self):
         """Return (left_px, top_px, right_px, bottom_px) for system UI bars in pixels.
@@ -80,15 +97,15 @@ class CommanderApp(App):
                 # Non-fatal; fall back to default dp-based values below
                 top_px = bottom_px = 0
         if top_px == 0:
-            top_px = int(dp(24))
+            top_px = int(self.sdp(24))
         if bottom_px == 0:
-            bottom_px = int(dp(24))
+            bottom_px = int(self.sdp(24))
         return left_px, top_px, right_px, bottom_px
 
     def update_safe_area_padding(self, *args):
         """Apply safe-area padding to the main layout (in pixels)."""
         left_px, top_px, right_px, bottom_px = self.get_system_bar_heights()
-        base = dp(10)
+        base = self.sdp(10)
         if hasattr(self, 'main_layout'):
             self.main_layout.padding = [base + left_px, base + top_px, base + right_px, base + bottom_px]
 
@@ -107,7 +124,7 @@ class CommanderApp(App):
             target_pct = 0.5
             desired_w = int(win_w * target_pct)
             # sensible width bounds
-            min_w = int(dp(200))
+            min_w = int(self.sdp(200))
             max_w = int(win_w * 0.85)
             desired_w = max(min_w, min(desired_w, max_w))
             # aspect ratio (height/width)
@@ -115,18 +132,18 @@ class CommanderApp(App):
             desired_h = int(desired_w * aspect)
 
             # Compute reserved space for top UI (padding + checkboxes + buttons + spacer + info label)
-            top_padding = int(self.main_layout.padding[1]) if hasattr(self, 'main_layout') else int(dp(10))
-            spacer_between = dp(16)
+            top_padding = int(self.main_layout.padding[1]) if hasattr(self, 'main_layout') else int(self.sdp(10))
+            spacer_between = self.sdp(16)
             checkbox_h = getattr(self, 'checkbox_grid').height if hasattr(self, 'checkbox_grid') else 0
             action_h = getattr(self, 'action_row').height if hasattr(self, 'action_row') else 0
-            info_h = getattr(self, 'info_label').height if hasattr(self, 'info_label') else dp(160)
+            info_h = getattr(self, 'info_label').height if hasattr(self, 'info_label') else self.sdp(160)
             top_used = top_padding + checkbox_h + action_h + spacer_between + info_h
 
             # Compute reserved bottom space (disclaimer + main_layout bottom padding)
-            bottom_reserved = (getattr(self, 'disclaimer_layout').height if hasattr(self, 'disclaimer_layout') else dp(80)) + (int(self.main_layout.padding[3]) if hasattr(self, 'main_layout') else int(dp(10)))
+            bottom_reserved = (getattr(self, 'disclaimer_layout').height if hasattr(self, 'disclaimer_layout') else self.sdp(80)) + (int(self.main_layout.padding[3]) if hasattr(self, 'main_layout') else int(self.sdp(10)))
 
             # Available height for the image (leave a small margin)
-            available_height = int(max(dp(160), win_h - top_used - bottom_reserved - dp(20)))
+            available_height = int(max(self.sdp(160), win_h - top_used - bottom_reserved - self.sdp(20)))
 
             # If desired height doesn't fit, scale down maintaining aspect ratio
             if desired_h > available_height:
@@ -140,12 +157,12 @@ class CommanderApp(App):
 
             self.image.size = (desired_w, desired_h)
             # Place image above the bottom reserved area with a small margin
-            y_pos = float((bottom_reserved + dp(8)) / float(win_h)) if win_h > 0 else 0.02
+            y_pos = float((bottom_reserved + self.sdp(8)) / float(win_h)) if win_h > 0 else 0.02
             self.image.pos_hint = {'center_x': 0.5, 'y': max(y_pos, 0.02)}
 
             # Update info_label wrapping width
             if hasattr(self, 'info_label'):
-                self.info_label.text_size = (win_w - dp(40), None)
+                self.info_label.text_size = (win_w - self.sdp(40), None)
         except Exception:
             pass
 
@@ -155,9 +172,9 @@ class CommanderApp(App):
         btn = ManaButton(
             orientation='vertical',
             size_hint_y=None,
-            height=70,
-            spacing=5,
-            padding=5
+            height=self.ssize(70),
+            spacing=self.ssize(5),
+            padding=self.ssize(5)
         )
         
         # Set background color and outline using canvas
@@ -180,8 +197,8 @@ class CommanderApp(App):
         image_container = BoxLayout(
             orientation='horizontal',
             size_hint_y=None,
-            height=40,
-            spacing=5
+            height=self.ssize(40),
+            spacing=self.ssize(5)
         )
         
         # Add left spacer to center images horizontally
@@ -190,14 +207,14 @@ class CommanderApp(App):
         # For colorless, only use the colorless symbol
         if code == "C":
             symbol_path = os.path.join(self.mana_symbols_path, self.color_to_symbol["C"])
-            img = Image(source=symbol_path, size_hint=(None, None), size=(40, 40), allow_stretch=True)
+            img = Image(source=symbol_path, size_hint=(None, None), size=(self.ssize(40), self.ssize(40)), allow_stretch=True)
             image_container.add_widget(img)
         else:
             # For each color in the code, add the corresponding symbol
             for color_char in code:
                 if color_char in self.color_to_symbol:
                     symbol_path = os.path.join(self.mana_symbols_path, self.color_to_symbol[color_char])
-                    img = Image(source=symbol_path, size_hint=(None, None), size=(40, 40), allow_stretch=True)
+                    img = Image(source=symbol_path, size_hint=(None, None), size=(self.ssize(40), self.ssize(40)), allow_stretch=True)
                     image_container.add_widget(img)
         
         # Add right spacer to center images horizontally
@@ -233,7 +250,7 @@ class CommanderApp(App):
         else:
             files = [self.color_to_symbol[ch] for ch in code if ch in self.color_to_symbol]
 
-        spacing = dp(8)
+        spacing = self.sdp(8)
         count = max(1, len(files))
         width = count * image_size + (count - 1) * spacing
         container = BoxLayout(orientation='horizontal', size_hint=(None, None), size=(width, image_size), spacing=spacing)
@@ -286,7 +303,7 @@ class CommanderApp(App):
         self.title = "MTG Random Commander Generator"
 
         # Main layout (no scrolling)
-        main_layout = BoxLayout(orientation='vertical', size_hint=(1, 1), spacing=10, padding=10)
+        main_layout = BoxLayout(orientation='vertical', size_hint=(1, 1), spacing=self.ssize(10), padding=self.ssize(10))
         # Keep a reference to modify padding based on device safe-area
         self.main_layout = main_layout
         # Initialize safe-area padding and update when window size changes
@@ -312,12 +329,12 @@ class CommanderApp(App):
         # Color selection (styled boxes that behave like buttons)
         self.checkboxes = {}
         colors_order = [('W', 'White'), ('U', 'Blue'), ('B', 'Black'), ('R', 'Red'), ('G', 'Green'), ('C', 'Colorless')]
-        checkbox_grid = GridLayout(cols=3, spacing=10, padding=[10, 10, 10, 10], size_hint_y=None)
+        checkbox_grid = GridLayout(cols=3, spacing=self.ssize(10), padding=[self.ssize(10), self.ssize(10), self.ssize(10), self.ssize(10)], size_hint_y=None)
         checkbox_grid.size_hint_y = None
-        checkbox_grid.height = dp(220)
+        checkbox_grid.height = self.sdp(220)
         for code, name in colors_order:
             # Use ManaButton styling so the boxes look like the previous buttons
-            box = ManaButton(orientation='horizontal', size_hint_y=None, height=100, spacing=5, padding=5)
+            box = ManaButton(orientation='horizontal', size_hint_y=None, height=self.ssize(100), spacing=self.ssize(5), padding=self.ssize(5))
             from kivy.graphics import Color, Rectangle, Line
             box.canvas.before.clear()
             with box.canvas.before:
@@ -327,7 +344,7 @@ class CommanderApp(App):
                 Line(rectangle=(box.x, box.y, box.width, box.height), width=2)
             box.bind(size=self._update_rect, pos=self._update_rect)
 
-            cb = CheckBox(active=False, size_hint=(None, None), size=(36, 36))
+            cb = CheckBox(active=False, size_hint=(None, None), size=(self.ssize(36), self.ssize(36)))
             cb.bind(active=lambda checkbox, value, c=code: self.on_color_checkbox(c, value))
             self.checkboxes[code] = cb
             # Use larger symbol images and center them using a FloatLayout so checkbox doesn't offset them
@@ -337,7 +354,7 @@ class CommanderApp(App):
             cb.pos_hint = {'x': 0.02, 'center_y': 0.5}
             float_area.add_widget(cb)
             # Create fixed-size symbol widget and center it in the float area
-            symbol_widget = self.create_symbol_widget(code, image_size=56)
+            symbol_widget = self.create_symbol_widget(code, image_size=self.ssize(56))
             symbol_widget.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
             float_area.add_widget(symbol_widget)
             box.add_widget(float_area)
@@ -347,15 +364,15 @@ class CommanderApp(App):
         # Keep a reference for sizing calculations
         self.checkbox_grid = checkbox_grid
         # Small spacer so action buttons sit slightly below the checkboxes
-        main_layout.add_widget(Widget(size_hint_y=None, height=6))
+        main_layout.add_widget(Widget(size_hint_y=None, height=self.ssize(6)))
 
         # Buttons: Generate and Clear Selection side-by-side
-        action_row = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=10, padding=[10,0])
+        action_row = BoxLayout(orientation='horizontal', size_hint_y=None, height=self.ssize(40), spacing=self.ssize(10), padding=[self.ssize(10),0])
         generate_btn = Button(
             text="Fetch Commander",
             background_color=(0.2, 0.3, 0.5, 1),
             color=(0.5, 1, 1, 1),
-            font_size=dp(14)
+            font_size=self.sdp(14)
         )
         generate_btn.bind(on_release=self.generate_commander)
 
@@ -363,7 +380,7 @@ class CommanderApp(App):
             text="Clear Selection",
             background_color=(0.4, 0.1, 0.1, 1),
             color=(1,1,1,1),
-            font_size=dp(14)
+            font_size=self.sdp(14)
         )
         clear_btn.bind(on_release=self.clear_selection)
 
@@ -379,7 +396,7 @@ class CommanderApp(App):
         content_area = FloatLayout(size_hint=(1, 1))
 
         # Large loading wheel centered behind text (hidden by default)
-        self.loading_wheel = self.LoadingWheel(image_source=os.path.join(self.mana_symbols_path, 'Colorless.jpg'), size=180)
+        self.loading_wheel = self.LoadingWheel(image_source=os.path.join(self.mana_symbols_path, 'Colorless.jpg'), size=self.ssize(180))
         self.loading_wheel.pos_hint = {'center_x': 0.5, 'center_y': 0.65}
         content_area.add_widget(self.loading_wheel)
 
@@ -389,44 +406,44 @@ class CommanderApp(App):
             halign="center",
             valign="top",
             size_hint=(0.9, None),
-            height=160,
+            height=self.ssize(160),
             color=(1,1,1,1),
-            font_size=dp(15),
-            text_size=(Window.width - 40, None),
+            font_size=self.sdp(15),
+            text_size=(Window.width - self.sdp(40), None),
             pos_hint={'center_x':0.5, 'top':0.80}
         )
         content_area.add_widget(self.info_label)
 
         # Card image centered below the info text
-        self.image = Image(size_hint=(None, None), size=(420, 546), pos_hint={'center_x':0.5, 'y':0.06})
+        self.image = Image(size_hint=(None, None), size=(self.ssize(420), self.ssize(546)), pos_hint={'center_x':0.5, 'y':0.06})
         content_area.add_widget(self.image)
         # Ensure the card scales to the current window size at startup
         self.update_card_size()
 
         # No-image label below image area
-        self.no_image_label = Label(text="", color=(1,1,1,1), size_hint=(0.9, None), height=40, font_size=dp(14), pos_hint={'center_x':0.5, 'y':0.02})
+        self.no_image_label = Label(text="", color=(1,1,1,1), size_hint=(0.9, None), height=self.ssize(40), font_size=self.sdp(14), pos_hint={'center_x':0.5, 'y':0.02})
         content_area.add_widget(self.no_image_label)
 
         main_layout.add_widget(content_area)
 
         # Disclaimer section at the bottom
-        disclaimer_layout = BoxLayout(orientation='vertical', size_hint_y=None, height=80, padding=10, spacing=5)
+        disclaimer_layout = BoxLayout(orientation='vertical', size_hint_y=None, height=self.ssize(80), padding=self.ssize(10), spacing=self.ssize(5))
         disclaimer_label = Label(
             text="!!!This app is currently under development and may not be perfect!!!",
             color=(1, 1, 0, 1),  # Yellow text
             size_hint_y=None,
-            height=30,
-            font_size=dp(16)
+            height=self.ssize(30),
+            font_size=self.sdp(16)
         )
         disclaimer_layout.add_widget(disclaimer_label)
         
         github_button = Button(
             text="My Github",
             size_hint_y=None,
-            height=40,
+            height=self.ssize(40),
             background_color=(0.2, 0.3, 0.5, 1),
             color=(0.5, 1, 1, 1),  # Cyan text
-            font_size=dp(12)
+            font_size=self.sdp(12)
         )
         github_button.bind(on_press=self.open_github)
         disclaimer_layout.add_widget(github_button)
@@ -437,7 +454,7 @@ class CommanderApp(App):
         return main_layout
 
     def show_popup(self, title, message):
-        popup = Popup(title=title, content=Label(text=message, font_size=dp(16)), size_hint=(None, None), size=(800, 400))
+        popup = Popup(title=title, content=Label(text=message, font_size=self.sdp(16)), size_hint=(None, None), size=(self.ssize(800), self.ssize(400)))
         popup.open()
 
     def on_color_checkbox(self, code, active):
@@ -512,11 +529,30 @@ class CommanderApp(App):
                 self.show_popup("No Commanders", "No commanders found for this color combination.")
                 return
 
-            # Exclude cards that are Arena-only
-            commanders = [c for c in data["data"] if 'arena' not in c.get('games', [])]
+            # Filter out unwanted cards:
+            # - Arena-only cards
+            # - Cards that are banned in the Commander format
+            # - Silver-bordered cards (funny / silver border)
+            # - Specific known problematic names (lowercased)
+            banned_names = {"acorn"}
+            commanders = []
+            for c in data["data"]:
+                # Skip Arena-only entries
+                if 'arena' in c.get('games', []):
+                    continue
+                # Skip if explicitly banned in Commander format
+                if c.get('legalities', {}).get('commander') == 'banned':
+                    continue
+                # Skip silver-bordered / funny cards
+                if c.get('border_color') == 'silver':
+                    continue
+                # Skip explicit blacklisted names
+                if c.get('name', '').strip().lower() in banned_names:
+                    continue
+                commanders.append(c)
             if not commanders:
                 self.stop_loading()
-                self.show_popup("No Commanders", "No non-Arena commanders found for this color combination.")
+                self.show_popup("No Commanders", "No suitable commanders found for this color combination.")
                 return
             # Shuffle the list to ensure randomness
             random.shuffle(commanders)
