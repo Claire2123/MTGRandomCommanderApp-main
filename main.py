@@ -112,16 +112,17 @@ class CommanderApp(App):
     def update_card_size(self, *args):
         """Resize the commander image to a percentage of the current window width while preserving aspect ratio.
 
-        Chooses a width of about 50% of Window.width, with sensible min/max limits, and clamps height
-        so the image never overlaps the top UI or bottom disclaimer.
+        Chooses a width of roughly 60% of Window.width (with min/max limits) and clamps height
+        so the image never overlaps the top UI or bottom disclaimer.  This ensures the card
+        sits centered below the info textbox without touching the buttons or disclaimer.
         """
         if not hasattr(self, 'image'):
             return
         try:
             win_w = Window.width
             win_h = Window.height
-            # target percentage of width (50%)
-            target_pct = 0.5
+            # target percentage of width (about 80% of screen width)
+            target_pct = 0.8
             desired_w = int(win_w * target_pct)
             # sensible width bounds
             min_w = int(self.sdp(200))
@@ -133,7 +134,7 @@ class CommanderApp(App):
 
             # Compute reserved space for top UI (padding + checkboxes + buttons + spacer + info label)
             top_padding = int(self.main_layout.padding[1]) if hasattr(self, 'main_layout') else int(self.sdp(10))
-            spacer_between = self.sdp(16)
+            spacer_between = self.sdp(80)  # leave a big gap for the info text area
             checkbox_h = getattr(self, 'checkbox_grid').height if hasattr(self, 'checkbox_grid') else 0
             action_h = getattr(self, 'action_row').height if hasattr(self, 'action_row') else 0
             info_h = getattr(self, 'info_label').height if hasattr(self, 'info_label') else self.sdp(160)
@@ -156,8 +157,16 @@ class CommanderApp(App):
                 desired_h = int(desired_w * aspect)
 
             self.image.size = (desired_w, desired_h)
-            # Place image above the bottom reserved area with a small margin
-            y_pos = float((bottom_reserved + self.sdp(8)) / float(win_h)) if win_h > 0 else 0.02
+            # Place image vertically centered in the space between the top UI and bottom reserved area.
+            # This keeps it nicely below the info textbox and avoids overlap while still allowing it
+            # to expand downward if there is extra room.
+            vertical_space = win_h - top_used - bottom_reserved
+            if win_h > 0 and vertical_space > 0:
+                # compute bottom coordinate so card sits centered in remaining space
+                y_base = bottom_reserved + max(self.sdp(8), (vertical_space - desired_h) / 2)
+                y_pos = float(y_base / win_h)
+            else:
+                y_pos = 0.02
             self.image.pos_hint = {'center_x': 0.5, 'y': max(y_pos, 0.02)}
 
             # Update info_label wrapping width
@@ -302,8 +311,8 @@ class CommanderApp(App):
     def build(self):
         self.title = "MTG Random Commander Generator"
 
-        # Main layout (no scrolling)
-        main_layout = BoxLayout(orientation='vertical', size_hint=(1, 1), spacing=self.ssize(10), padding=self.ssize(10))
+        # Main layout (no scrolling) - spacing will be controlled for mana/action group
+        main_layout = BoxLayout(orientation='vertical', size_hint=(1, 1), spacing=0, padding=self.ssize(10))
         # Keep a reference to modify padding based on device safe-area
         self.main_layout = main_layout
         # Initialize safe-area padding and update when window size changes
@@ -329,12 +338,21 @@ class CommanderApp(App):
         # Color selection (styled boxes that behave like buttons)
         self.checkboxes = {}
         colors_order = [('W', 'White'), ('U', 'Blue'), ('B', 'Black'), ('R', 'Red'), ('G', 'Green'), ('C', 'Colorless')]
-        checkbox_grid = GridLayout(cols=3, spacing=self.ssize(10), padding=[self.ssize(10), self.ssize(10), self.ssize(10), self.ssize(10)], size_hint_y=None)
-        checkbox_grid.size_hint_y = None
-        checkbox_grid.height = self.sdp(220)
+        # compute rows and dynamic height based on smaller box size
+        cols = 3
+        count = len(colors_order)
+        rows = (count + cols - 1) // cols
+        box_height = self.ssize(70)
+        vert_spacing = self.ssize(5)
+        pad_left = self.ssize(10)
+        pad_top = self.ssize(5)
+        pad_right = self.ssize(10)
+        pad_bottom = 0
+        checkbox_grid = GridLayout(cols=cols, spacing=self.ssize(5), padding=[pad_left, pad_top, pad_right, pad_bottom], size_hint_y=None)
+        checkbox_grid.height = rows * box_height + (rows - 1) * vert_spacing + pad_top + pad_bottom
         for code, name in colors_order:
             # Use ManaButton styling so the boxes look like the previous buttons
-            box = ManaButton(orientation='horizontal', size_hint_y=None, height=self.ssize(100), spacing=self.ssize(5), padding=self.ssize(5))
+            box = ManaButton(orientation='horizontal', size_hint_y=None, height=box_height, spacing=self.ssize(5), padding=self.ssize(5))
             from kivy.graphics import Color, Rectangle, Line
             box.canvas.before.clear()
             with box.canvas.before:
@@ -360,14 +378,20 @@ class CommanderApp(App):
             box.add_widget(float_area)
             box.bind(on_release=lambda b, c=code: self.toggle_checkbox(c))
             checkbox_grid.add_widget(box)
-        main_layout.add_widget(checkbox_grid)
-        # Keep a reference for sizing calculations
         self.checkbox_grid = checkbox_grid
-        # Small spacer so action buttons sit slightly below the checkboxes
-        main_layout.add_widget(Widget(size_hint_y=None, height=self.ssize(6)))
+        main_layout.add_widget(checkbox_grid)
 
-        # Buttons: Generate and Clear Selection side-by-side
-        action_row = BoxLayout(orientation='horizontal', size_hint_y=None, height=self.ssize(40), spacing=self.ssize(10), padding=[self.ssize(10),0])
+        # debugging: log positions after layout
+        def log_positions(dt):
+            print(f"DEBUG: checkbox_grid y={checkbox_grid.y} height={checkbox_grid.height}")
+            if hasattr(self, 'action_row'):
+                print(f"DEBUG: action_row y={self.action_row.y} height={self.action_row.height}")
+            else:
+                print("DEBUG: action_row not yet created")
+        Clock.schedule_once(log_positions, 0)
+
+        # Buttons: Generate and Clear Selection (directly below mana buttons, no gap)
+        action_row = BoxLayout(orientation='horizontal', size_hint_y=None, height=self.ssize(60), spacing=self.ssize(10), padding=[self.ssize(10),0])
         generate_btn = Button(
             text="Fetch Commander",
             background_color=(0.2, 0.3, 0.5, 1),
@@ -386,42 +410,51 @@ class CommanderApp(App):
 
         action_row.add_widget(generate_btn)
         action_row.add_widget(clear_btn)
-        # Keep a reference for sizing calculations
         self.action_row = action_row
         main_layout.add_widget(action_row)
-        # Add extra vertical space so the info text is separated from the action buttons
-        main_layout.add_widget(Widget(size_hint_y=None, height=16))
-        # Content overlay area (fills remaining space) so we can center a large loading wheel behind the text
-        from kivy.uix.floatlayout import FloatLayout
-        content_area = FloatLayout(size_hint=(1, 1))
+        
+        # Keep main_layout spacing at 0 so the mana grid and buttons remain adjacent
+        # Add a dedicated spacer between buttons and the following content instead
+        from kivy.uix.widget import Widget
+        main_layout.add_widget(Widget(size_hint_y=None, height=self.ssize(10)))
 
-        # Large loading wheel centered behind text (hidden by default)
-        self.loading_wheel = self.LoadingWheel(image_source=os.path.join(self.mana_symbols_path, 'Colorless.jpg'), size=self.ssize(180))
-        self.loading_wheel.pos_hint = {'center_x': 0.5, 'center_y': 0.65}
-        content_area.add_widget(self.loading_wheel)
+        # schedule another check after layout happens
+        Clock.schedule_once(log_positions, 0.1)
 
-        # Description label (on top of loading wheel)
+
+        # Description label (directly below buttons) with extra height for safe area
         self.info_label = Label(
             text="",
             halign="center",
             valign="top",
-            size_hint=(0.9, None),
-            height=self.ssize(160),
+            size_hint_y=None,
+            height=self.ssize(440),
             color=(1,1,1,1),
-            font_size=self.sdp(15),
-            text_size=(Window.width - self.sdp(40), None),
-            pos_hint={'center_x':0.5, 'top':0.80}
+            font_size=self.sdp(13),
+            text_size=(Window.width - self.sdp(40), None)
         )
-        content_area.add_widget(self.info_label)
+        main_layout.add_widget(self.info_label)
 
-        # Card image centered below the info text
-        self.image = Image(size_hint=(None, None), size=(self.ssize(420), self.ssize(546)), pos_hint={'center_x':0.5, 'y':0.06})
+        # Content overlay area (fills remaining space) so we can center a large loading wheel behind the image
+        from kivy.uix.floatlayout import FloatLayout
+        content_area = FloatLayout(size_hint=(1, 1))
+
+        # Large loading wheel centered behind image (hidden by default)
+        self.loading_wheel = self.LoadingWheel(image_source=os.path.join(self.mana_symbols_path, 'Colorless.jpg'), size=self.ssize(180))
+        self.loading_wheel.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
+        content_area.add_widget(self.loading_wheel)
+
+        # Card image centered in the content area
+        # allow_stretch/keep_ratio lets the texture scale to whatever widget size we compute
+        self.image = Image(size_hint=(None, None), size=(self.ssize(420), self.ssize(546)),
+                           pos_hint={'center_x':0.5, 'center_y':0.5},
+                           allow_stretch=True, keep_ratio=True)
         content_area.add_widget(self.image)
         # Ensure the card scales to the current window size at startup
         self.update_card_size()
 
         # No-image label below image area
-        self.no_image_label = Label(text="", color=(1,1,1,1), size_hint=(0.9, None), height=self.ssize(40), font_size=self.sdp(14), pos_hint={'center_x':0.5, 'y':0.02})
+        self.no_image_label = Label(text="", color=(1,1,1,1), size_hint=(0.9, None), height=self.ssize(40), font_size=self.sdp(14), pos_hint={'center_x':0.5, 'bottom':0.02})
         content_area.add_widget(self.no_image_label)
 
         main_layout.add_widget(content_area)
@@ -599,6 +632,8 @@ class CommanderApp(App):
         # Always clear image first
         self.image.source = ""
         self.image.texture = None
+        # ensure size is correct for current window, in case something changed
+        self.update_card_size()
         if url and not no_image:
             Loader.loading_image = None
             img = Loader.image(url)
@@ -633,28 +668,88 @@ class CommanderApp(App):
         # Default extension detection
         ext = 'png' if (len(content) >= 8 and content[:8].startswith(b'\x89PNG')) else 'jpg'
 
-        # Try to use PIL to detect rounded white corners and make them transparent
+        # Try to use PIL to detect light/near-white rounded corners and make them transparent.
+        # Use a small sampled region in each corner (to handle anti-aliased edges) and
+        # convert pixels with high brightness to fully transparent so rounded corners look correct.
         try:
             from PIL import Image as PILImage
             im = PILImage.open(BytesIO(content)).convert('RGBA')
             w, h = im.size
-            threshold = 245
-            def corners_are_white():
-                for cx, cy in [(0,0),(w-1,0),(0,h-1),(w-1,h-1)]:
-                    r,g,b,a = im.getpixel((cx,cy))
-                    if not (r >= threshold and g >= threshold and b >= threshold):
-                        return False
-                return True
-            if corners_are_white():
-                datas = im.getdata()
-                newData = []
-                for item in datas:
-                    r,g,b,a = item
-                    if r >= threshold and g >= threshold and b >= threshold:
-                        newData.append((255,255,255,0))
-                    else:
-                        newData.append((r,g,b,a))
-                im.putdata(newData)
+            # size of corner sample (limit to a small portion of the image)
+            corner_sample = min(12, max(3, w // 20, h // 20))
+            # brightness threshold (0-255) above which pixels are considered 'background'
+            threshold = 230
+
+            def corner_avg_brightness(x0, y0):
+                total = 0
+                count = 0
+                for x in range(max(0, x0), min(w, x0 + corner_sample)):
+                    for y in range(max(0, y0), min(h, y0 + corner_sample)):
+                        r, g, b, a = im.getpixel((x, y))
+                        total += (r + g + b) / 3.0
+                        count += 1
+                return (total / count) if count else 0
+
+            tl = corner_avg_brightness(0, 0)
+            tr = corner_avg_brightness(w - corner_sample, 0)
+            bl = corner_avg_brightness(0, h - corner_sample)
+            br = corner_avg_brightness(w - corner_sample, h - corner_sample)
+
+            # If any corner is mostly light (near-white), perform a flood-fill cleanup
+            # starting from each corner. This removes only background pixels connected
+            # to the corners (so internal white areas remain intact).
+            if max(tl, tr, bl, br) >= threshold:
+                from collections import deque
+                pixels = im.load()
+                visited = set()
+                max_fill = w * h // 2  # safety limit to avoid pathological fills
+
+                def brightness_xy(x, y):
+                    r, g, b, a = pixels[x, y]
+                    return (r + g + b) / 3.0
+
+                def flood_from_seed(sx, sy):
+                    q = deque()
+                    if brightness_xy(sx, sy) < threshold:
+                        return 0
+                    q.append((sx, sy))
+                    visited.add((sx, sy))
+                    filled = 0
+                    while q:
+                        x, y = q.popleft()
+                        if brightness_xy(x, y) >= threshold:
+                            pixels[x, y] = (255, 255, 255, 0)
+                            filled += 1
+                            if filled > max_fill:
+                                break
+                            for nx, ny in ((x+1, y), (x-1, y), (x, y+1), (x, y-1)):
+                                if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited:
+                                    visited.add((nx, ny))
+                                    try:
+                                        if brightness_xy(nx, ny) >= threshold:
+                                            q.append((nx, ny))
+                                    except Exception:
+                                        pass
+                    return filled
+
+                # seeds: small region in each corner to account for anti-alias
+                seeds = []
+                for cx in range(0, min(corner_sample, w)):
+                    for cy in range(0, min(corner_sample, h)):
+                        seeds.append((cx, cy))                      # top-left
+                        seeds.append((w - 1 - cx, cy))             # top-right
+                        seeds.append((cx, h - 1 - cy))             # bottom-left
+                        seeds.append((w - 1 - cx, h - 1 - cy))     # bottom-right
+
+                for sx, sy in seeds:
+                    if (sx, sy) not in visited:
+                        try:
+                            if brightness_xy(sx, sy) >= threshold:
+                                flood_from_seed(sx, sy)
+                        except Exception:
+                            continue
+
+                # write out PNG preserving transparency
                 buf = BytesIO()
                 im.save(buf, format='PNG')
                 content = buf.getvalue()
