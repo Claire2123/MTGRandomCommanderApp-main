@@ -57,6 +57,9 @@ class CommanderApp(App):
             "G": "Green.jpg",
             "C": "Colorless.jpg"
         }
+        # used when showing transform/flipable cards
+        self.current_commander_data = None
+        self.current_face_index = 0
 
     def sdp(self, value):
         """Scaled dp: returns dp(value) multiplied by ui_scale."""
@@ -435,9 +438,27 @@ class CommanderApp(App):
         )
         main_layout.add_widget(self.info_label)
 
+        # Flip button for transformable cards (initially hidden/disabled)
+        # start with height 0 so layout doesn't reserve space until we know a card is flip-able
+        self.flip_btn = Button(
+            text="Flip Card",
+            size_hint_y=None,
+            height=0,
+            font_size=self.sdp(14),
+            opacity=0,
+            disabled=True
+        )
+        self.flip_btn.bind(on_release=self.flip_card)
+        main_layout.add_widget(self.flip_btn)
+
         # Content overlay area (fills remaining space) so we can center a large loading wheel behind the image
         from kivy.uix.floatlayout import FloatLayout
         content_area = FloatLayout(size_hint=(1, 1))
+        
+        # Ensure content area has transparent background so gradient shows through
+        from kivy.graphics import Color
+        with content_area.canvas.before:
+            Color(1, 1, 1, 0)  # Transparent background
 
         # Large loading wheel centered behind image (hidden by default)
         self.loading_wheel = self.LoadingWheel(image_source=os.path.join(self.mana_symbols_path, 'Colorless.jpg'), size=self.ssize(180))
@@ -598,19 +619,27 @@ class CommanderApp(App):
                 commander = commanders[0]  # fallback if all are the same
             self.last_commander_name = commander["name"]
 
-            info_text = f"Name: {commander['name']}\nMana Cost: {commander.get('mana_cost', 'N/A')}\nType: {commander.get('type_line', 'N/A')}\nText: {commander.get('oracle_text', 'No description available')}"
-            self.update_info(info_text)
+            # remember current commander data for flipping functionality
+            self.current_commander_data = commander
+            self.current_face_index = 0
+            self.update_flip_button()
 
-            img_url = None
-            # Try image_uris (normal), then card_faces[0][image_uris][normal], then card_faces[0][image_uris][large], else None
-            if "image_uris" in commander and "normal" in commander["image_uris"]:
-                img_url = commander["image_uris"]["normal"]
-            elif "card_faces" in commander and commander["card_faces"]:
-                face = commander["card_faces"][0]
-                if "image_uris" in face and "normal" in face["image_uris"]:
-                    img_url = face["image_uris"]["normal"]
-                elif "image_uris" in face and "large" in face["image_uris"]:
-                    img_url = face["image_uris"]["large"]
+            # set description for the first face
+            self.update_info_for_current_face()
+
+            # determine initial image url based on face index
+            def pick_image_url(cmd, idx):
+                # try top-level image first if idx == 0
+                if idx == 0 and "image_uris" in cmd:
+                    return cmd["image_uris"].get("normal") or cmd["image_uris"].get("large")
+                # fall back to card_faces if available
+                if "card_faces" in cmd and idx < len(cmd["card_faces"]):
+                    face = cmd["card_faces"][idx]
+                    if "image_uris" in face:
+                        return face["image_uris"].get("normal") or face["image_uris"].get("large")
+                return None
+
+            img_url = pick_image_url(commander, self.current_face_index)
             # If still no image, show 'no image available' and clear image
             if img_url:
                 # Download and process the image in this background thread, then set texture on main thread
@@ -648,117 +677,173 @@ class CommanderApp(App):
             self.loading_wheel.stop()
 
     @mainthread
+    def update_info_for_current_face(self):
+        """Update the description label based on the currently shown face of the card."""
+        cmd = getattr(self, 'current_commander_data', None)
+        if not cmd:
+            return
+        idx = getattr(self, 'current_face_index', 0)
+        # default to top-level fields
+        name = cmd.get('name', '')
+        mana = cmd.get('mana_cost', 'N/A')
+        typ = cmd.get('type_line', 'N/A')
+        text = cmd.get('oracle_text', 'No description available')
+        # if face-specific data exists, override
+        if 'card_faces' in cmd and idx < len(cmd['card_faces']):
+            face = cmd['card_faces'][idx]
+            name = face.get('name', name)
+            mana = face.get('mana_cost', mana)
+            typ = face.get('type_line', typ)
+            text = face.get('oracle_text', text)
+        info_text = f"Name: {name}\nMana Cost: {mana}\nType: {typ}\nText: {text}"
+        self.update_info(info_text)
+
+    @mainthread
+    def update_flip_button(self):
+        """Show or hide the flip button depending on whether the current commander has multiple faces."""
+        btn = getattr(self, 'flip_btn', None)
+        if not btn:
+            return
+        has_multiple = False
+        cmd = getattr(self, 'current_commander_data', None)
+        if cmd:
+            if 'card_faces' in cmd and len(cmd['card_faces']) > 1:
+                has_multiple = True
+        # enable the button only if there are multiple faces
+        if has_multiple:
+            btn.opacity = 1
+            btn.disabled = False
+            btn.height = self.ssize(40)
+        else:
+            btn.opacity = 0
+            btn.disabled = True
+            # collapse height so it doesn't reserve vertical space
+            btn.height = 0
+
+    def flip_card(self, instance):
+        """Toggle between faces and refresh the displayed image and info."""
+        if not hasattr(self, 'current_commander_data'):
+            return
+        cmd = self.current_commander_data
+        faces = cmd.get('card_faces') or []
+        if len(faces) <= 1:
+            return
+        # toggle index
+        self.current_face_index = 1 - getattr(self, 'current_face_index', 0)
+        # update description text before downloading image so UI updates promptly
+        self.update_info_for_current_face()
+        self.update_card_image_from_commander()
+
+    def update_card_image_from_commander(self):
+        """Helper to select the correct face image and begin download/cropping."""
+        cmd = getattr(self, 'current_commander_data', None)
+        if not cmd:
+            self.update_image(None, no_image=True)
+            return
+        idx = getattr(self, 'current_face_index', 0)
+        # pick url similar to logic above in get_commander
+        def pick_image_url(cmd, idx):
+            if idx == 0 and "image_uris" in cmd:
+                return cmd["image_uris"].get("normal") or cmd["image_uris"].get("large")
+            if "card_faces" in cmd and idx < len(cmd["card_faces"]):
+                face = cmd["card_faces"][idx]
+                if "image_uris" in face:
+                    return face["image_uris"].get("normal") or face["image_uris"].get("large")
+            return None
+        url = pick_image_url(cmd, idx)
+        if url:
+            # start the loading wheel and download
+            if hasattr(self, 'loading_wheel'):
+                self.loading_wheel.start()
+            self.download_and_show_image(url)
+        else:
+            self.update_image(None, no_image=True)
+
+    @mainthread
     def stop_loading(self):
         """Called from background thread to ensure the loading wheel is stopped on the main thread."""
         if hasattr(self, 'loading_wheel'):
             self.loading_wheel.stop()
 
     def download_and_show_image(self, url):
-        """Download image bytes, convert white rounded corners to transparent if detected, and set texture."""
+        """Download image and remove white anti-aliased corner pixels from rounded card corners."""
         try:
             resp = requests.get(url)
             resp.raise_for_status()
             content = resp.content
         except requests.exceptions.RequestException as e:
-            # Stop the spinner and show a message
             self.stop_loading()
             self.show_popup("Image Error", f"Failed to download image: {e}")
             return
 
-        # Default extension detection
-        ext = 'png' if (len(content) >= 8 and content[:8].startswith(b'\x89PNG')) else 'jpg'
+        original_content = content
+        original_ext = 'png' if (len(content) >= 8 and content[:8].startswith(b'\x89PNG')) else 'jpg'
+        ext = original_ext
 
-        # Try to use PIL to detect light/near-white rounded corners and make them transparent.
-        # Use a small sampled region in each corner (to handle anti-aliased edges) and
-        # convert pixels with high brightness to fully transparent so rounded corners look correct.
+        # Process image to remove white corner anti-aliasing by making corner pixels transparent
         try:
+            # Pillow is required to edit the image; on Android it must be added to buildozer.spec
             from PIL import Image as PILImage
+            import math
+            
             im = PILImage.open(BytesIO(content)).convert('RGBA')
             w, h = im.size
-            # size of corner sample (limit to a small portion of the image)
-            corner_sample = min(12, max(3, w // 20, h // 20))
-            # brightness threshold (0-255) above which pixels are considered 'background'
-            threshold = 230
+            pixels = im.load()
+            
+            # Small corner region size to target just the anti-alias pixels
+            corner_region = min(25, min(w, h) // 20)
+            radius = corner_region - 5  # Very small radius to only catch outer anti-alias pixels
+            
+            # Apply circular mask to each corner - make pixels INSIDE the circle transparent
+            # This removes the white anti-alias pixels at the rounded corners
+            # Top-left corner
+            for x in range(corner_region):
+                for y in range(corner_region):
+                    distance = math.sqrt(x**2 + y**2)
+                    if distance < radius:
+                        r, g, b, a = pixels[x, y]
+                        pixels[x, y] = (r, g, b, 0)
+            
+            # Top-right corner
+            for x in range(w - corner_region, w):
+                for y in range(corner_region):
+                    distance = math.sqrt((w - 1 - x)**2 + y**2)
+                    if distance < radius:
+                        r, g, b, a = pixels[x, y]
+                        pixels[x, y] = (r, g, b, 0)
+            
+            # Bottom-left corner
+            for x in range(corner_region):
+                for y in range(h - corner_region, h):
+                    distance = math.sqrt(x**2 + (h - 1 - y)**2)
+                    if distance < radius:
+                        r, g, b, a = pixels[x, y]
+                        pixels[x, y] = (r, g, b, 0)
+            
+            # Bottom-right corner
+            for x in range(w - corner_region, w):
+                for y in range(h - corner_region, h):
+                    distance = math.sqrt((w - 1 - x)**2 + (h - 1 - y)**2)
+                    if distance < radius:
+                        r, g, b, a = pixels[x, y]
+                        pixels[x, y] = (r, g, b, 0)
+            
+            # Save as PNG to preserve transparency
+            buf = BytesIO()
+            im.save(buf, format='PNG')
+            content = buf.getvalue()
+            ext = 'png'
+            
+        except ImportError:
+            # Pillow isn't available (e.g. not included in buildozer requirements)
+            print("WARNING: Pillow not installed; skipping corner cropping")
+            content = original_content
+            ext = original_ext
+        except Exception as e:
+            # If processing fails for any other reason, revert to original image
+            content = original_content
+            ext = original_ext
 
-            def corner_avg_brightness(x0, y0):
-                total = 0
-                count = 0
-                for x in range(max(0, x0), min(w, x0 + corner_sample)):
-                    for y in range(max(0, y0), min(h, y0 + corner_sample)):
-                        r, g, b, a = im.getpixel((x, y))
-                        total += (r + g + b) / 3.0
-                        count += 1
-                return (total / count) if count else 0
-
-            tl = corner_avg_brightness(0, 0)
-            tr = corner_avg_brightness(w - corner_sample, 0)
-            bl = corner_avg_brightness(0, h - corner_sample)
-            br = corner_avg_brightness(w - corner_sample, h - corner_sample)
-
-            # If any corner is mostly light (near-white), perform a flood-fill cleanup
-            # starting from each corner. This removes only background pixels connected
-            # to the corners (so internal white areas remain intact).
-            if max(tl, tr, bl, br) >= threshold:
-                from collections import deque
-                pixels = im.load()
-                visited = set()
-                max_fill = w * h // 2  # safety limit to avoid pathological fills
-
-                def brightness_xy(x, y):
-                    r, g, b, a = pixels[x, y]
-                    return (r + g + b) / 3.0
-
-                def flood_from_seed(sx, sy):
-                    q = deque()
-                    if brightness_xy(sx, sy) < threshold:
-                        return 0
-                    q.append((sx, sy))
-                    visited.add((sx, sy))
-                    filled = 0
-                    while q:
-                        x, y = q.popleft()
-                        if brightness_xy(x, y) >= threshold:
-                            pixels[x, y] = (255, 255, 255, 0)
-                            filled += 1
-                            if filled > max_fill:
-                                break
-                            for nx, ny in ((x+1, y), (x-1, y), (x, y+1), (x, y-1)):
-                                if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited:
-                                    visited.add((nx, ny))
-                                    try:
-                                        if brightness_xy(nx, ny) >= threshold:
-                                            q.append((nx, ny))
-                                    except Exception:
-                                        pass
-                    return filled
-
-                # seeds: small region in each corner to account for anti-alias
-                seeds = []
-                for cx in range(0, min(corner_sample, w)):
-                    for cy in range(0, min(corner_sample, h)):
-                        seeds.append((cx, cy))                      # top-left
-                        seeds.append((w - 1 - cx, cy))             # top-right
-                        seeds.append((cx, h - 1 - cy))             # bottom-left
-                        seeds.append((w - 1 - cx, h - 1 - cy))     # bottom-right
-
-                for sx, sy in seeds:
-                    if (sx, sy) not in visited:
-                        try:
-                            if brightness_xy(sx, sy) >= threshold:
-                                flood_from_seed(sx, sy)
-                        except Exception:
-                            continue
-
-                # write out PNG preserving transparency
-                buf = BytesIO()
-                im.save(buf, format='PNG')
-                content = buf.getvalue()
-                ext = 'png'
-        except Exception:
-            # If PIL is not available or fails, proceed with raw bytes
-            pass
-
-        # Set the image on the main thread
         self._set_image_bytes(content, ext)
 
     @mainthread
