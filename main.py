@@ -48,6 +48,9 @@ class CommanderApp(App):
         # Tweak this value if you want larger/smaller overall UI.
         self.ui_scale = 0.88
         
+        # current image rotation (degrees), used for upside-down flips
+        self.image_rotation = 0
+        
         # Mapping of color codes to symbol files
         self.color_to_symbol = {
             "W": "White.jpg",
@@ -424,6 +427,20 @@ class CommanderApp(App):
         # schedule another check after layout happens
         Clock.schedule_once(log_positions, 0.1)
 
+        # Create a floating container for the description area.  We put the
+        # loading wheel inside this float so the spinner is always drawn behind
+        # the text box instead of behind the image below it.  The wheel is
+        # created first so the label sits on top of it.
+        from kivy.uix.floatlayout import FloatLayout
+        desc_area = FloatLayout(size_hint_y=None, height=self.ssize(440))
+
+        # Large loading wheel centered under the info text (hidden by default)
+        self.loading_wheel = self.LoadingWheel(
+            image_source=os.path.join(self.mana_symbols_path, 'Colorless.jpg'),
+            size=self.ssize(180)
+        )
+        self.loading_wheel.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
+        desc_area.add_widget(self.loading_wheel)
 
         # Description label (directly below buttons) with extra height for safe area
         self.info_label = Label(
@@ -434,9 +451,11 @@ class CommanderApp(App):
             height=self.ssize(440),
             color=(1,1,1,1),
             font_size=self.sdp(13),
-            text_size=(Window.width - self.sdp(40), None)
+            text_size=(Window.width - self.sdp(40), None),
+            pos_hint={'top': 1, 'center_x': 0.5}
         )
-        main_layout.add_widget(self.info_label)
+        desc_area.add_widget(self.info_label)
+        main_layout.add_widget(desc_area)
 
         # Flip button for transformable cards (initially hidden/disabled)
         # start with height 0 so layout doesn't reserve space until we know a card is flip-able
@@ -460,10 +479,6 @@ class CommanderApp(App):
         with content_area.canvas.before:
             Color(1, 1, 1, 0)  # Transparent background
 
-        # Large loading wheel centered behind image (hidden by default)
-        self.loading_wheel = self.LoadingWheel(image_source=os.path.join(self.mana_symbols_path, 'Colorless.jpg'), size=self.ssize(180))
-        self.loading_wheel.pos_hint = {'center_x': 0.5, 'center_y': 0.5}
-        content_area.add_widget(self.loading_wheel)
 
         # Card image centered in the content area
         # allow_stretch/keep_ratio lets the texture scale to whatever widget size we compute
@@ -657,7 +672,10 @@ class CommanderApp(App):
         self.info_label.text_size = (Window.width - 40, None)
 
     @mainthread
-    def update_image(self, url, no_image=False):
+    def update_image(self, url, no_image=False, rotate=False):
+        # rotation flag (degrees). Keep track so we can reapply after texture changes.
+        self.image_rotation = 180 if rotate else 0
+
         # Always clear image first
         self.image.source = ""
         self.image.texture = None
@@ -675,6 +693,8 @@ class CommanderApp(App):
         # Stop the loading wheel now that we have either an image or a no-image message
         if hasattr(self, 'loading_wheel'):
             self.loading_wheel.stop()
+        # also apply any rotation instructions immediately in case a previous texture was left
+        self._apply_image_rotation()
 
     @mainthread
     def update_info_for_current_face(self):
@@ -732,6 +752,9 @@ class CommanderApp(App):
         self.current_face_index = 1 - getattr(self, 'current_face_index', 0)
         # update description text before downloading image so UI updates promptly
         self.update_info_for_current_face()
+        # the helper will now detect when the alternate face has no image and
+        # treat it as an "upside down" variant by reusing the first face and
+        # rotating it 180 degrees.
         self.update_card_image_from_commander()
 
     def update_card_image_from_commander(self):
@@ -750,7 +773,24 @@ class CommanderApp(App):
                 if "image_uris" in face:
                     return face["image_uris"].get("normal") or face["image_uris"].get("large")
             return None
+
+        # choose url; apply rotation logic for face index 1
+        self.image_rotation = 0
         url = pick_image_url(cmd, idx)
+        if idx == 1:
+            # if this is a flip-layout card, always show it upside-down
+            if cmd.get('layout') == 'flip':
+                self.image_rotation = 180
+                # if the second face has no image, use the first face's URL
+                if url is None:
+                    url = pick_image_url(cmd, 0)
+            # previously we treated missing image as rotated fallback for
+            # non-adventure layouts; keep that behavior for other layouts too.
+            elif url is None:
+                fallback = pick_image_url(cmd, 0)
+                if fallback and cmd.get('layout') != 'adventure':
+                    url = fallback
+                    self.image_rotation = 180
         if url:
             # start the loading wheel and download
             if hasattr(self, 'loading_wheel'):
@@ -854,6 +894,8 @@ class CommanderApp(App):
             self.image.texture = core.texture
             self.no_image_label.text = ""
             self.no_image_label.background_color = (0.27, 0.19, 0.98, 0)  # Hide textbox
+            # rotation might be requested for upside-down face
+            self._apply_image_rotation()
         except Exception as e:
             self.show_popup("Image Error", f"Failed to load image: {e}")
         finally:
@@ -862,6 +904,37 @@ class CommanderApp(App):
 
     def _on_image_loaded(self, img, *args):
         self.image.texture = img.texture
+        # after texture is assigned, update any rotation instruction
+        self._apply_image_rotation()
+
+    def _apply_image_rotation(self):
+        """Add/remove canvas instructions to rotate the card image if needed."""
+        angle = getattr(self, 'image_rotation', 0) or 0
+        # clear any previous rotation draws
+        self.image.canvas.before.clear()
+        self.image.canvas.after.clear()
+        if angle != 0:
+            from kivy.graphics import PushMatrix, PopMatrix, Rotate
+            # begin transform before drawing widget's own canvas
+            with self.image.canvas.before:
+                PushMatrix()
+                # keep a reference to update origin when size/pos change
+                self._img_rot = Rotate(origin=self.image.center, angle=angle)
+            # close transform after widget draws
+            with self.image.canvas.after:
+                PopMatrix()
+            # update origin on movement
+            self.image.bind(pos=self._update_image_rot, size=self._update_image_rot)
+        else:
+            # if no rotation required, unbind any previous handler
+            try:
+                self.image.unbind(pos=self._update_image_rot, size=self._update_image_rot)
+            except Exception:
+                pass
+
+    def _update_image_rot(self, *args):
+        if hasattr(self, '_img_rot'):
+            self._img_rot.origin = self.image.center
 
     def open_github(self, instance):
         webbrowser.open("https://github.com/Claire2123")
