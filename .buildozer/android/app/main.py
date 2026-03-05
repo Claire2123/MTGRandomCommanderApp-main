@@ -1,5 +1,6 @@
 import requests
 import random
+import re
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
@@ -715,8 +716,80 @@ class CommanderApp(App):
             mana = face.get('mana_cost', mana)
             typ = face.get('type_line', typ)
             text = face.get('oracle_text', text)
-        info_text = f"Name: {name}\nMana Cost: {mana}\nType: {typ}\nText: {text}"
+
+        name_display = self.replace_mana_symbols_in_text(name)
+        mana_display = self.format_mana_cost_for_display(mana)
+        type_display = self.replace_mana_symbols_in_text(typ)
+        text_display = self.replace_mana_symbols_in_text(text)
+
+        info_text = f"Name: {name_display}\nMana Cost: {mana_display}\nType: {type_display}\nText: {text_display}"
         self.update_info(info_text)
+
+    def format_mana_cost_for_display(self, mana_cost):
+        """Convert a mana cost like {3}{R}{R} into readable words."""
+        if not mana_cost:
+            return 'N/A'
+        symbols = re.findall(r'\{([^}]+)\}', mana_cost)
+        if not symbols:
+            return mana_cost
+        return ', '.join(self.mana_symbol_to_words(symbol) for symbol in symbols)
+
+    def mana_symbol_to_words(self, symbol):
+        """Convert a single mana symbol token into readable words."""
+        colors = {
+            'W': 'white',
+            'U': 'blue',
+            'B': 'black',
+            'R': 'red',
+            'G': 'green',
+            'C': 'colorless'
+        }
+
+        token = symbol.upper()
+
+        if token.isdigit():
+            return f"{token} generic"
+        if token in colors:
+            return f"one {colors[token]}"
+        if token == 'X':
+            return 'X variable'
+        if token == 'Y':
+            return 'Y variable'
+        if token == 'Z':
+            return 'Z variable'
+        if token == 'T':
+            return 'tap'
+        if token == 'Q':
+            return 'untap'
+        if token == 'E':
+            return 'one energy'
+        if token == 'P':
+            return 'one phyrexian'
+        if token == 'S':
+            return 'one snow'
+
+        if '/' in token:
+            parts = token.split('/')
+            if len(parts) == 2:
+                left, right = parts
+                if left.isdigit() and right in colors:
+                    return f"{left} generic or one {colors[right]}"
+                if left in colors and right in colors:
+                    return f"one {colors[left]} or one {colors[right]}"
+                if right == 'P' and left in colors:
+                    return f"one {colors[left]} or two life"
+
+        return token
+
+    def replace_mana_symbols_in_text(self, text):
+        """Replace all {symbol} instances in a text string with readable words."""
+        if not text:
+            return text
+
+        def repl(match):
+            return self.mana_symbol_to_words(match.group(1))
+
+        return re.sub(r'\{([^}]+)\}', repl, text)
 
     @mainthread
     def update_flip_button(self):
