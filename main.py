@@ -1,6 +1,7 @@
 import requests
 import random
 import re
+import importlib
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
@@ -22,6 +23,8 @@ import os
 import webbrowser
 
 print("This app is under development and is not perfect!")
+
+REQUEST_TIMEOUT_SECONDS = 20
 
 # Custom button widget that uses images
 class ManaButton(ButtonBehavior, BoxLayout):
@@ -88,7 +91,7 @@ class CommanderApp(App):
         top_px = bottom_px = 0
         if platform == 'android':
             try:
-                from jnius import autoclass
+                autoclass = importlib.import_module('jnius').autoclass
                 PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 activity = PythonActivity.mActivity
                 resources = activity.getResources()
@@ -422,7 +425,6 @@ class CommanderApp(App):
         
         # Keep main_layout spacing at 0 so the mana grid and buttons remain adjacent
         # Add a dedicated spacer between buttons and the following content instead
-        from kivy.uix.widget import Widget
         main_layout.add_widget(Widget(size_hint_y=None, height=self.ssize(10)))
 
         # schedule another check after layout happens
@@ -587,7 +589,7 @@ class CommanderApp(App):
             query = f"https://api.scryfall.com/cards/search?q=(t:legendary+type:creature+OR+oracle:%22can+be+your+commander%22+OR+oracle:partner)+color={color_code}&unique=cards"
         def fetch():
             try:
-                response = requests.get(query)
+                response = requests.get(query, timeout=REQUEST_TIMEOUT_SECONDS)
                 response.raise_for_status()
                 data = response.json()
             except requests.exceptions.RequestException as e:
@@ -645,19 +647,7 @@ class CommanderApp(App):
             # set description for the first face
             self.update_info_for_current_face()
 
-            # determine initial image url based on face index
-            def pick_image_url(cmd, idx):
-                # try top-level image first if idx == 0
-                if idx == 0 and "image_uris" in cmd:
-                    return cmd["image_uris"].get("normal") or cmd["image_uris"].get("large")
-                # fall back to card_faces if available
-                if "card_faces" in cmd and idx < len(cmd["card_faces"]):
-                    face = cmd["card_faces"][idx]
-                    if "image_uris" in face:
-                        return face["image_uris"].get("normal") or face["image_uris"].get("large")
-                return None
-
-            img_url = pick_image_url(commander, self.current_face_index)
+            img_url = self._pick_image_url(commander, self.current_face_index)
             # If still no image, show 'no image available' and clear image
             if img_url:
                 # Download and process the image in this background thread, then set texture on main thread
@@ -666,7 +656,17 @@ class CommanderApp(App):
                 self.update_image(None, no_image=True)
 
         import threading
-        threading.Thread(target=fetch).start()
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _pick_image_url(self, cmd, idx):
+        """Return best image URL for a commander/card face index."""
+        if idx == 0 and "image_uris" in cmd:
+            return cmd["image_uris"].get("normal") or cmd["image_uris"].get("large")
+        if "card_faces" in cmd and idx < len(cmd["card_faces"]):
+            face = cmd["card_faces"][idx]
+            if "image_uris" in face:
+                return face["image_uris"].get("normal") or face["image_uris"].get("large")
+        return None
 
     @mainthread
     def update_info(self, text):
@@ -839,30 +839,20 @@ class CommanderApp(App):
             self.update_image(None, no_image=True)
             return
         idx = getattr(self, 'current_face_index', 0)
-        # pick url similar to logic above in get_commander
-        def pick_image_url(cmd, idx):
-            if idx == 0 and "image_uris" in cmd:
-                return cmd["image_uris"].get("normal") or cmd["image_uris"].get("large")
-            if "card_faces" in cmd and idx < len(cmd["card_faces"]):
-                face = cmd["card_faces"][idx]
-                if "image_uris" in face:
-                    return face["image_uris"].get("normal") or face["image_uris"].get("large")
-            return None
-
         # choose url; apply rotation logic for face index 1
         self.image_rotation = 0
-        url = pick_image_url(cmd, idx)
+        url = self._pick_image_url(cmd, idx)
         if idx == 1:
             # if this is a flip-layout card, always show it upside-down
             if cmd.get('layout') == 'flip':
                 self.image_rotation = 180
                 # if the second face has no image, use the first face's URL
                 if url is None:
-                    url = pick_image_url(cmd, 0)
+                    url = self._pick_image_url(cmd, 0)
             # previously we treated missing image as rotated fallback for
             # non-adventure layouts; keep that behavior for other layouts too.
             elif url is None:
-                fallback = pick_image_url(cmd, 0)
+                fallback = self._pick_image_url(cmd, 0)
                 if fallback and cmd.get('layout') != 'adventure':
                     url = fallback
                     self.image_rotation = 180
@@ -883,7 +873,7 @@ class CommanderApp(App):
     def download_and_show_image(self, url):
         """Download image and remove white anti-aliased corner pixels from rounded card corners."""
         try:
-            resp = requests.get(url)
+            resp = requests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
             resp.raise_for_status()
             content = resp.content
         except requests.exceptions.RequestException as e:
